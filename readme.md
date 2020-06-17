@@ -8,7 +8,7 @@ This is my first personal project as a way to learn GoLang.
 
 You will realise there was two statistic for 1 day of data, full per minutes data and hourly data for 24 hours. This is to demonstrate the capabilities for the API and at the same time to demonstrate how long it takes by taking every minutes data vs every hour data. 
 
-The performance might be able to be improved by using different database.
+The performance might be able to be improved by using different DBMS.
 
 
 ## Pre-requisites
@@ -39,7 +39,5 @@ Are more than welcome! For small changes feel free to open a pull request. Or yo
 
 ## Credits
 
-- CheckDate function as what I loved from PHP: https://github.com/openset/php2go/blob/master/php/checkdate.go
-	I have copied it and saved it to one of my file: pkg_phpcheckdate.go Since I need it for my own.
-	You can see more useful tools on php2go, especially if you are coming from PHP developer background like myself.
+- CheckDate function as what I loved from PHP: https://github.com/openset/php2go/blob/master/php/checkdate.go . I have copied it and saved it to one of my file: pkg_phpcheckdate.go Since I only need this specific file. You can see more useful tools on php2go (https://github.com/openset/php2go), especially if you are coming from PHP developer background like myself.
 

@@ -27,6 +27,7 @@ func main() {
 	fmt.Println("4. Get the 1 Day Temperature Statistic (Hourly Recording for 24 Hour)")
 	fmt.Println("5. Get the 1 Month Temperature Statistic (Hourly Recording for 24 Hours each day - max is Last Month)")
 	fmt.Println("6. Get the statistic from all the saved data")
+	fmt.Println("7. Get the statistic for 1 FULL day of data")
 
 	//Get the Input of Date from user.
 	inpChoiceValStr := SGAirTemp.GetUserInput("\nYour Choice: ")
@@ -57,6 +58,12 @@ func main() {
 		}
 	case 6:
 		errMsg := DBConn.GetAllDataStatistic()
+		if errMsg != "" {
+			log.Fatal(errMsg)
+			os.Exit(1)
+		}
+	case 7:
+		errMsg := DBConn.GetOneFullDayStatistic()
 		if errMsg != "" {
 			log.Fatal(errMsg)
 			os.Exit(1)

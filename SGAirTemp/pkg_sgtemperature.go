@@ -106,8 +106,16 @@ func GetDateTimeInput() (string, string) {
 
 //APICallAndGetResponse - API Call for the
 func APICallAndGetResponse(ValDate, ValTime string) (response TemperatureResponse, errorMessage string) {
+	dateTimeCondition := ""
+	if len(ValDate) > 0 && len(ValTime) > 0 {
+		dateTimeCondition = fmt.Sprintf("date_time=%v", url.QueryEscape(ValDate+"T"+ValTime+":00"))
+	} else if len(ValDate) > 0 {
+		dateTimeCondition = fmt.Sprintf("date=%v", url.QueryEscape(ValDate))
+	} else {
+		return response, "Please provide Date and Time."
+	}
 	//String API Call, we only need to get the data until the minute level.
-	strAPICall := "https://api.data.gov.sg/v1/environment/air-temperature?date_time=" + url.QueryEscape(ValDate+"T"+ValTime+":00") + "&date=" + ValDate
+	strAPICall := fmt.Sprintf("https://api.data.gov.sg/v1/environment/air-temperature?%v", dateTimeCondition)
 	res, err := http.Get(strAPICall)
 
 	if err != nil {
@@ -138,37 +146,44 @@ func APICallAndGetResponse(ValDate, ValTime string) (response TemperatureRespons
 
 //CallTemperatureAPIAndSave - Get User Input for Date and Time and Save it to Database
 func (dbc *DB) CallTemperatureAPIAndSave(ValDate, ValTime string, displayResult bool) (resultInfo string) {
-	Stations := []string{}
 	//Call the API for TemperatureReading and retrieve the response.
 	response, err1 := APICallAndGetResponse(ValDate, ValTime)
-
 	if err1 != "" {
 		resultInfo = err1
 	} else {
 		//Iterate for the Station object and save it to the Database
 		for i := 0; i < (len(response.Metadata.Station)); i++ {
 			st := response.Metadata.Station[i]
-			Stations = append(Stations, st.StationID, st.StationName)
 			dbc.InsertStation(st.StationID, st.StationName, strconv.FormatFloat(st.Location.Latitude, 'f', 5, 64), strconv.FormatFloat(st.Location.Longitude, 'f', 5, 64))
 		}
 
 		//Iterate for the TemperatureReading object and save it to the Database
-		TemperatureData := &response.TemperatureData[0]
-		strTimeStamp := TemperatureData.Timestamp
-		for i := 0; i < (len(TemperatureData.TemperatureReading)); i++ {
-			rd := TemperatureData.TemperatureReading[i]
-			//fmt.Printf("%"+MaxStationNameLen+"s"+" | %v | %v\n", Stations[rd.StationID], strTimeStamp, rd.Value)
-			dbc.InsertTemperatureReading(rd.StationID, strTimeStamp, rd.Value)
+		totalReadings := len(response.TemperatureData)
+		if len(ValTime) == 0 && totalReadings > 0 && displayResult == false {
+			fmt.Printf("\nProcessing the API response, this may take a while: ")
 		}
-		if displayResult == true && len(TemperatureData.TemperatureReading) > 0 {
-			fmt.Printf("\nThe Result returned by the API might not be the same timing as what you input.\nThe API will sometimes return the nearest time on what you requested.")
-			arrDateTime := strings.Split(strTimeStamp, "T")
-			valDate := string(arrDateTime[0])
-			valTime := string([]rune(arrDateTime[1])[0:5])
-			dbc.PrintTemperatureReading(valDate, valTime)
-		}
+		for a := 0; a < totalReadings; a++ {
+			if len(ValTime) == 0 && totalReadings > 0 && displayResult == false {
+				fmt.Printf(".")
+			}
+			TemperatureData := &response.TemperatureData[a]
+			strTimeStamp := TemperatureData.Timestamp
+			for i := 0; i < (len(TemperatureData.TemperatureReading)); i++ {
+				rd := TemperatureData.TemperatureReading[i]
+				dbc.InsertTemperatureReading(rd.StationID, strTimeStamp, rd.Value)
+			}
+			if len(ValTime) > 0 && displayResult == true && totalReadings > 0 {
+				fmt.Printf("\nThe Result returned by the API might not be the same timing as what you input.\nThe API will sometimes return the nearest time on what you requested.")
+				arrDateTime := strings.Split(strTimeStamp, "T")
+				valDate := string(arrDateTime[0])
+				valTime := string([]rune(arrDateTime[1])[0:5])
+				dbc.PrintTemperatureReading(valDate, valTime)
+			}
 
-		fmt.Printf("%v", strTimeStamp)
+		}
+		if len(ValTime) == 0 && displayResult == false && totalReadings > 0 {
+			fmt.Printf(" Done")
+		}
 
 	}
 	return resultInfo
@@ -262,6 +277,11 @@ func (dbc *DB) GetOneDayStatistic(strDateRequested string) string {
 		dateVal = GetDateInput()
 	}
 
+	StationID := ""
+	if dontShowMessage == false {
+		StationID = dbc.GetChoosenStation()
+	}
+	StartExecutionTime := time.Now()
 	if ValidateInputDateMaxYesterday(dateVal) == true {
 		StrQuery := ""
 
@@ -273,11 +293,6 @@ func (dbc *DB) GetOneDayStatistic(strDateRequested string) string {
 		yrCond := string([]rune(dateVal)[0:4])
 		moCond := string([]rune(dateVal)[5:7])
 		dtCond := string([]rune(dateVal)[8:10])
-
-		StationID := ""
-		if dontShowMessage == false {
-			StationID = dbc.GetChoosenStation()
-		}
 
 		//Set the Where condition
 		WhereCondition = append(WhereCondition, fmt.Sprintf("yr ='%v'", yrCond))
@@ -385,8 +400,139 @@ func (dbc *DB) GetOneDayStatistic(strDateRequested string) string {
 				fmt.Printf("\nMaximum Temperature              : %v", maxTemp)
 				fmt.Printf("\nMaximum Temperature Occurence(s) : ")
 				fmt.Printf("\n%v", maxTempDateTimeAndStation)
+				EndExecutionTime := time.Now()
+				TimeNeeded := EndExecutionTime.Sub(StartExecutionTime)
+				fmt.Printf("\nTime Needed                      : %v", TimeNeeded)
 			} else {
 				resultInfo = fmt.Sprintf("Couldn't find the data reading for '%v'. ", dateVal)
+			}
+		}
+	} else {
+		resultInfo = fmt.Sprintf("The Inputted date %s must be not later than yesterday. ", dateVal)
+	}
+
+	return resultInfo
+}
+
+//GetOneFullDayStatistic a function to get one full day statistic provided by the API
+func (dbc *DB) GetOneFullDayStatistic() string {
+	resultInfo := ""
+	var StationName string
+	var yr string
+	var mo string
+	var dt string
+	var hr string
+	var mi string
+	var value float64
+
+	dontShowMessage := false
+	var dateVal string
+	dateVal = GetDateInput()
+	dateVal = CheckInputDate(dateVal)
+
+	minTemp := 9999.99
+	maxTemp := -9999.99
+	totalTemp := 0.00
+	totalReadings := 0.00
+	centerData := 0
+
+	//Minimum Temperature Date/Time and StationName
+	minTempDateTimeAndStation := ""
+	//Maximum Temperature Date/Time and StationName
+	maxTempDateTimeAndStation := ""
+
+	//Flexible array, by using splices
+	WhereCondition := []string{}
+
+	if ValidateInputDateMaxYesterday(dateVal) == true {
+		StrQuery := ""
+
+		//extract the year, month and date
+		yrCond := string([]rune(dateVal)[0:4])
+		moCond := string([]rune(dateVal)[5:7])
+		dtCond := string([]rune(dateVal)[8:10])
+
+		StationID := ""
+		if dontShowMessage == false {
+			StationID = dbc.GetChoosenStation()
+		}
+
+		//Set the Where condition
+		WhereCondition = append(WhereCondition, fmt.Sprintf("yr ='%v'", yrCond))
+		WhereCondition = append(WhereCondition, fmt.Sprintf("mo ='%v'", moCond))
+		WhereCondition = append(WhereCondition, fmt.Sprintf("dt ='%v'", dtCond))
+		if len(StationID) > 0 {
+			WhereCondition = append(WhereCondition, fmt.Sprintf("r.station_id ='%v'", StationID))
+		}
+
+		StartExecutionTime := time.Now()
+
+		fmt.Printf("\nCalling the API to check for FULL day (YYYY-MM-DD): %v\n", dateVal)
+		resultInfo := dbc.CallTemperatureAPIAndSave(dateVal, "", false)
+
+		if len(resultInfo) <= 0 {
+			StrQueryCnt := fmt.Sprintf("SELECT count(value) AS scalarRes FROM readings r INNER JOIN stations s ON s.station_id = r.station_id WHERE %v ", strings.Join(WhereCondition[:], " AND "))
+			GetTotalRows, _ := strconv.Atoi(dbc.GetScalar(StrQueryCnt))
+
+			if GetTotalRows > 0 {
+				centerData = int(GetTotalRows / 2)
+				EvenPosStart := centerData
+				EvenPosEnd := centerData + 1
+				EvenPosStartValue := 0.00
+				EvenPosEndValue := 0.00
+
+				StrQuery = fmt.Sprintf("SELECT s.station_name, yr, mo, dt, hr, mi, value FROM readings r INNER JOIN stations s ON s.station_id = r.station_id WHERE %v ORDER BY r.value, s.station_name, yr, mo, dt, hr, mi", strings.Join(WhereCondition[:], " AND "))
+				rows, _ := dbc.Query(StrQuery)
+
+				for rows.Next() {
+					rows.Scan(&StationName, &yr, &mo, &dt, &hr, &mi, &value)
+					if value > maxTemp {
+						maxTemp = value
+
+						//Maximum Temperature Date/Time and StationName
+						maxTempDateTimeAndStation = fmt.Sprintf("  - %v-%v-%v %v:%v -> %v\n", yr, mo, dt, hr, mi, StationName)
+					} else if value == maxTemp {
+						maxTempDateTimeAndStation = fmt.Sprintf("%v  - %v-%v-%v %v:%v -> %v\n", maxTempDateTimeAndStation, yr, mo, dt, hr, mi, StationName)
+					}
+
+					if value < minTemp {
+						minTemp = value
+
+						//Minimum Temperature Date/Time and StationName
+						minTempDateTimeAndStation = fmt.Sprintf("  - %v-%v-%v %v:%v -> %v\n", yr, mo, dt, hr, mi, StationName)
+					} else if value == minTemp {
+						maxTempDateTimeAndStation = fmt.Sprintf("%v  - %v-%v-%v %v:%v -> %v\n", minTempDateTimeAndStation, yr, mo, dt, hr, mi, StationName)
+					}
+
+					totalTemp += value
+					totalReadings++
+					if EvenPosStart == int(totalReadings) {
+						EvenPosStartValue = value
+					}
+					if EvenPosEnd == int(totalReadings) {
+						EvenPosEndValue = value
+					}
+				}
+				fmt.Printf("\nTotal Readings                   : %v", totalReadings)
+				fmt.Printf("\nAverange Readings                : %.2f", (totalTemp / totalReadings))
+				//Is Even, so we need to get the average of the two of the center data
+				if (GetTotalRows % 2) == 0 {
+					fmt.Printf("\nMean Readings                    : %.2f", (EvenPosStartValue+EvenPosEndValue)/2)
+				} else {
+					//Is ODD, just get the center/middle data
+					fmt.Printf("\nMean Readings                    : %.2f", EvenPosEndValue)
+				}
+
+				fmt.Printf("\nMinimum Temperature              : %v", minTemp)
+				fmt.Printf("\nMinimum Temperature Occurence(s) : ")
+				fmt.Printf("\n%v", minTempDateTimeAndStation)
+				fmt.Printf("\nMaximum Temperature              : %v", maxTemp)
+				fmt.Printf("\nMaximum Temperature Occurence(s) : ")
+				fmt.Printf("\n%v", maxTempDateTimeAndStation)
+				EndExecutionTime := time.Now()
+				TimeNeeded := EndExecutionTime.Sub(StartExecutionTime)
+				fmt.Printf("\nTime Needed                      : %v", TimeNeeded)
+
 			}
 		}
 	} else {
@@ -500,6 +646,7 @@ func (dbc *DB) GetOneMonthStatistic() string {
 				WhereCondition = append(WhereCondition, fmt.Sprintf("r.station_id ='%v'", StationID))
 			}
 
+			StartExecutionTime := time.Now()
 			StrQueryCnt := fmt.Sprintf("SELECT count(value) AS scalarRes FROM readings r INNER JOIN stations s ON s.station_id = r.station_id WHERE %v GROUP BY s.station_name", strings.Join(WhereCondition[:], " AND "))
 			GetTotalRows, _ := strconv.Atoi(dbc.GetScalar(StrQueryCnt))
 			if GetTotalRows > 0 {
@@ -554,6 +701,10 @@ func (dbc *DB) GetOneMonthStatistic() string {
 				fmt.Printf("\nMaximum Temperature              : %v", maxTemp)
 				fmt.Printf("\nMaximum Temperature Occurence(s) : ")
 				fmt.Printf("\n%v", maxTempDateTimeAndStation)
+				EndExecutionTime := time.Now()
+				TimeNeeded := EndExecutionTime.Sub(StartExecutionTime)
+				fmt.Printf("\nTime Needed                      : %v", TimeNeeded)
+
 			}
 		}
 	}
@@ -589,6 +740,7 @@ func (dbc *DB) GetAllDataStatistic() string {
 	if len(StationID) > 0 {
 		WhereCondition = fmt.Sprintf(" WHERE r.station_id ='%v' ", StationID)
 	}
+	StartExecutionTime := time.Now()
 
 	StrQueryCnt := fmt.Sprintf("SELECT count(value) AS scalarRes FROM readings r INNER JOIN stations s ON s.station_id = r.station_id %v ", WhereCondition)
 	GetTotalRows, _ := strconv.Atoi(dbc.GetScalar(StrQueryCnt))
@@ -648,6 +800,10 @@ func (dbc *DB) GetAllDataStatistic() string {
 		fmt.Printf("\nMaximum Temperature              : %v", maxTemp)
 		fmt.Printf("\nMaximum Temperature Occurence(s) : ")
 		fmt.Printf("\n%v", maxTempDateTimeAndStation)
+		EndExecutionTime := time.Now()
+		TimeNeeded := EndExecutionTime.Sub(StartExecutionTime)
+		fmt.Printf("\nTime Needed                      : %v", TimeNeeded)
+
 	}
 
 	return resultInfo
